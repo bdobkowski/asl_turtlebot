@@ -67,12 +67,13 @@ class Supervisor:
         self.theta = 0
 
         # Goal state
-        self.x_g = 0
-        self.y_g = 0
+        self.x_g = 1.5
+        self.y_g = -4.0
         self.theta_g = 0
 
         # Current mode
-        self.mode = Mode.IDLE
+        # self.mode = Mode.IDLE
+        self.mode = Mode.POSE
         self.prev_mode = None  # For printing purposes
 
         ########## PUBLISHERS ##########
@@ -152,6 +153,10 @@ class Supervisor:
 
         # if close enough and in nav mode, stop
         if dist > 0 and dist < self.params.stop_min_dist and self.mode == Mode.NAV:
+            self.init_stop_sign()
+
+        # if close enough and in nav mode, stop
+        if dist > 0 and dist < self.params.stop_min_dist and self.mode == Mode.POSE:
             self.init_stop_sign()
 
 
@@ -259,13 +264,18 @@ class Supervisor:
 
         elif self.mode == Mode.STOP:
             # At a stop sign
-            self.nav_to_pose()
+            if self.has_stopped():
+                self.init_crossing()
+                self.mode = Mode.CROSS
 
         elif self.mode == Mode.CROSS:
             # Crossing an intersection
-            self.nav_to_pose()
+            if self.has_crossed():
+                self.mode = Mode.POSE
 
         elif self.mode == Mode.NAV:
+            print(self.x_g)
+            print(self.x)
             if self.close_to(self.x_g, self.y_g, self.theta_g):
                 self.mode = Mode.IDLE
             else:
