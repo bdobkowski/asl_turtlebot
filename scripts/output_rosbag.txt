@@ -1,0 +1,12 @@
+path:        our_bag.bag
+version:     2.0
+duration:    27.0s
+start:       Dec 31 1969 16:19:07.80 (1147.80)
+end:         Dec 31 1969 16:19:34.80 (1174.80)
+size:        112.2 KB
+messages:    1626
+compression: none [1/1 chunks]
+types:       std_msgs/Float64 [fdb28210bfa9d7c91146260178d9a584]
+topics:      controller/alpha   542 msgs    : std_msgs/Float64 (2 connections)
+             controller/delta   542 msgs    : std_msgs/Float64 (2 connections)
+             controller/rho     542 msgs    : std_msgs/Float64 (2 connections)
