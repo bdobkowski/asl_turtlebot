@@ -59,7 +59,7 @@ class Navigator:
 
         # plan parameters
         self.plan_resolution = 0.1
-        self.plan_horizon = 15
+        self.plan_horizon = 30 #15
 
         # time when we started following the plan
         self.current_plan_start_time = rospy.get_rostime()
@@ -82,7 +82,7 @@ class Navigator:
         self.at_thresh_theta = 0.05
 
         # trajectory smoothing
-        self.spline_alpha = 0.15
+        self.spline_alpha = 0.05 #0.15
         self.traj_dt = 0.1
 
         # trajectory tracking controller parameters
@@ -97,8 +97,9 @@ class Navigator:
         self.traj_controller = TrajectoryTracker(
             self.kpx, self.kpy, self.kdx, self.kdy, self.v_max, self.om_max
         )
+        #I (Jack Dibachi) changed the pose controller parameters from 0, 0, 0 to 0.4, 0.4, 0.8
         self.pose_controller = PoseController(
-            0.0, 0.0, 0.0, self.v_max, self.om_max
+            0.4, 0.4, 0.8, self.v_max, self.om_max
         )
         self.heading_controller = HeadingController(self.kp_th, self.om_max)
 
@@ -172,7 +173,7 @@ class Navigator:
                 self.map_height,
                 self.map_origin[0],
                 self.map_origin[1],
-                8,
+                4, #window size used to be 8. changing to make for better navigation
                 self.map_probs,
             )
             if self.x_g is not None:

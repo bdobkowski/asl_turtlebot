@@ -1,5 +1,5 @@
 import numpy as np
-from utils import wrapToPi
+from utils.utils import wrapToPi
 
 # command zero velocities once we are this close to the goal
 RHO_THRES = 0.05
