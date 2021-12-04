@@ -2,31 +2,17 @@
 # Including A* navigation and the ability to stop at stop signs, objects, ...
 
 # TO-DO
-# Put IsItFound.msg into the same folder as DetectedObject, DetectedObjectList
-# need to figure out how we are detecting stop signs in the rescue phase??
-#  -- if we turn off the detector, it won't stop unless we record stop sign locations too??
-# implement a switch to stage 2? - maybe a subscriber
-# program a way to go through the waypoints and iterate on the goal
-# put an import waypoints command?
-# - Loop through the waypoints
-# - For each waypoint, navigate towards it, once close enough to goal, set goal to next waypoint
-# - Once at the last waypoint, switch modes to stage 2
-# Once in stage 2, 
-# - subscribe to a rosparam -- rescue_item -- string corresponding to the item name
-# - if at the rescued object, 
+# Improve how we load the waypoints (random values are hard-coded rn)
+# Figure out how to switch the detection method between the exploring/saving and rescuing phases
+# Make sure all of the necessary controllers are in the controllers folder (pose, trajectory, heading)
+# A lot of the logic is in the PARK mode in the state machine section, but this might not be the best place for it
+# Check: After rescuing all of the objects, is CROSS the right one to transition to? (should navigate back to origin)
+# Check: Do we also need to return to the starting point between Stage 1 and Stage 2?
+# How should we define the order of the objects to rescue? Currently, in same order as inputted in param
 
-# Figure out how we pass in the parameters for the to-rescue objects. List??
-
-# make a callback for when the list of objects to rescue is received
-# store the list of objects
-# count the number of objects and store to self.num_obj_to_rescue
-# set the goal to be the first object???
-
-# note to switch the stage, update the rosparam manually
-
-# Update num_obj_rescued when rescued
-
-# once all of the objects are rescued, go back home
+# NOTES:
+# - We will be passing in the list of objects to rescue as a rosparam
+# - The current project stage (1 or 2) will be passed in as a rosparam too
 
 
 #!/usr/bin/env python3
@@ -128,7 +114,7 @@ class FSM:
         self.at_thresh_theta = 0.05
 
         # trajectory smoothing
-        self.spline_alpha = 0.15
+        self.spline_alpha = 0.05 # Previously 0.15
         self.traj_dt = 0.1
 
         # trajectory tracking controller parameters
@@ -168,9 +154,13 @@ class FSM:
         self.object_locations = {'house':(None, None), 'tree':(None, None), 'skyscraper':(None, None), 'tent':(None, None), 'boat':(None, None)} # initialize
         self.stored = False # to check if we have stored the objects to rescue or not
         self.num_obj_to_rescue = None
-        # Need to update these!!
-        self.waypoints = [(1,2,.5), (3,4,-.5), (5,6,0)] # initial list of waypoints for testing
+        self.x_init = None
+        self.y_init = None
+        self.theta_init = None
+        # NOTE: Need to update these!!
+        self.waypoints = [(1,2,.5), (3,4,-.5), (5,6,0)] # NOTE initial list of waypoints for testing only!!!
         self.currentWPind = 0
+        self.currentRescueID = 0
         self.num_obj_rescued = 0
         self.objectsToRescue = []
 
@@ -264,7 +254,6 @@ class FSM:
         if dist > 0 and dist < self.params.stop_min_dist and (self.mode == Mode.ALIGN or self.mode == Mode.TRACK or self.mode == Mode.PARK):
             self.init_stop_sign()
     
-    
     def object_detected_callback(self, msg):
         # Only need to perform this callback if we are in stage 1 (recording locations)
         # (Detector does not need to be run during Stage 2 (rescue) because we already know where these things are)
@@ -279,19 +268,6 @@ class FSM:
             if num_obj>0 and any(x==False for x in self.found_objects.values()): 
                 # Begin the saving process if so
                 self.init_saving(objectMessages)
-
-    def receive_objects_to_rescue_callback(self, msg):
-        # When we receive the rosparameter i
-        pass # FINISH THIS
-
-    def iterate_waypoint(self):
-        # Sets the goal position to be the next waypoint
-        self.currentWPind +=1
-        x,y,th = self.waypoints[self.currentWPind]
-        self.x_g = x
-        self.y_g = y
-        self.theta_g = th
-        self.replan()
     
     def near_goal(self):
         """
@@ -437,10 +413,17 @@ class FSM:
                rospy.get_rostime() - self.cross_start > rospy.Duration.from_sec(self.params.crossing_time)
 
     def init_rescuing(self):
-        """ initiates an intersection crossing maneuver """
         self.rescue_start = rospy.get_rostime()
         self.switch_mode(Mode.RESCUING)
         # NOTE: need to add some stuff here about what objects have been rescuing, marking as rescued, ...
+        # Some stuff we have from the other function:
+        # self.objectsToRescue is a list of names of objects we want to rescue
+        # self.num_obj_to_rescue = is the number of objects we rescue
+        # self.isRescued is a dictionary containing name => boolean(is this object rescued? True or False)
+
+    def mark_rescued(self, objectName):
+        self.isRescued[objectName] = True
+        self.num_obj_rescued = sum(self.isRescued.values()) # update: Count the number of True values in dict
 
     def has_rescued(self):
         """ checks if rescuing maneuver is over """
@@ -470,6 +453,30 @@ class FSM:
                 # Assign the corresponding elements in the dictionaries if we haven't already done so
                 self.found_objects[name] = True
                 self.object_locations[name] = (x,y)
+
+    def iterate_waypoint(self):
+        # Sets the goal position to be the next waypoint
+        self.currentWPind +=1
+        x,y,th = self.waypoints[self.currentWPind]
+        self.x_g = x
+        self.y_g = y
+        self.theta_g = th
+        self.replan()
+    
+    def iterate_rescueTarget(self):
+        self.currentRescueID +=1
+        x,y,th = self.object_locations[self.objectsToRescue[self.currentRescueID]]
+        self.x_g = x
+        self.y_g = y
+        self.theta_g = th
+        self.replan()
+
+    def returnHome(self):
+        # Sets the goal position to be the initial position
+        self.x_g = self.x_init
+        self.y_g = self.y_init
+        self.theta_g = self.theta_init
+        self.replan()
 
 
     def replan(self):
@@ -580,6 +587,14 @@ class FSM:
                 self.y = translation[1]
                 euler = tf.transformations.euler_from_quaternion(rotation)
                 self.theta = euler[2]
+
+                # NEW: NOTE: check to see if this is the best way to save the initial map position
+                if not savedInitPosition:
+                    self.x_init = self.x
+                    self.y_init = self.y
+                    self.theta_init = self.theta
+                    savedInitPosition = True
+
             except (
                 tf.LookupException,
                 tf.ConnectivityException,
@@ -600,6 +615,8 @@ class FSM:
             else:
                 raise Exception("Wrong project mode input!")
 
+            # This runs once we input the rosparam of the things we want to rescue
+            # will initialize some stuff about what we are gonna rescue
             if rospy.has_param("objectsToRescue") and not self.stored:
                 self.objectsToRescue = rospy.get_param("objectsToRescue") # should be a list
                 self.num_obj_to_rescue = len(self.objectsToRescue)
@@ -607,6 +624,7 @@ class FSM:
                 self.isRescued = dict(zip(self.objectsToRescue, [False for i in range(self.num_obj_to_rescue)]))
                 self.stored = True
             
+            if self.projectMode == ProjectMode.STAGE2 and  #FINISH
 
             # STATE MACHINE LOGIC
             # some transitions handled by callbacks
@@ -635,16 +653,17 @@ class FSM:
                             self.x_g = None
                             self.y_g = None
                             self.theta_g = None
-                            self.switch_mode(Mode.IDLE)
+                            self.switch_mode(Mode.IDLE) # NOTE maybe switch to stage 2 automatically??
                         else:
                             self.iterate_waypoint()
                             self.switch_mode(Mode.ALIGN)
                     else: # in Stage 2
                         if not self.num_obj_rescued == self.num_obj_to_rescue:# We are still trying to rescue objects (we have not rescued all objects) NOTE finish
                             self.init_rescuing()
+                        elif not self.close_to(self.x_init, self.y_init, self.theta_init): # We have rescued all, but still need to return back to initial position
+                            self.returnHome()
                         else: # We have returned to the initial position
-                            self.finish()
-
+                            self.switch_mode(Mode.IDLE)
 
             # MY FSM ADDITIONS
             elif self.mode == Mode.STOP:
@@ -671,6 +690,8 @@ class FSM:
 
             elif self.mode == Mode.RESCUING:
                 if self.has_rescued():
+                    self.mark_rescued(self, self.objectsToRescue[self.currentRescueID])
+                    self.iterate_rescueTarget()
                     self.init_crossing()
                     self.switch_mode(Mode.CROSS)
                 else:
