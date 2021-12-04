@@ -5,7 +5,8 @@ import os
 # watch out on the order for the next two imports lol
 from tf import TransformListener
 try:
-    import tensorflow as tf
+    import tensorflow.compat.v1 as tf # modified from import tensorflow as tf
+    tf.disable_v2_behavior() # new line
 except:
     pass
 import numpy as np
@@ -31,14 +32,14 @@ def load_object_labels(filename):
 
 class DetectorParams:
 
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=True):
 
         # Set to True to use tensorflow and a conv net.
         # False will use a very simple color thresholding to detect stop signs only.
-        self.use_tf = rospy.get_param("use_tf")
+        self.use_tf = rospy.get_param("use_tf", True) # setting default to false # REMEMBER TO CHANGE DEFAULT BACK TO FALSE
 
         # Path to the trained conv net
-        model_path = rospy.get_param("~model_path", "../../tfmodels/stop_signs_gazebo.pb")
+        model_path = rospy.get_param("~model_path", "../../tfmodels/ssd_mobilenet_v1_coco.pb") # need to update this to coco
         label_path = rospy.get_param("~label_path", "../../tfmodels/coco_labels.txt")
         self.model_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), model_path)
         self.label_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), label_path)
@@ -105,8 +106,8 @@ class Detector:
                 (boxes, scores, classes, num) = self.sess.run(
                 [self.d_boxes,self.d_scores,self.d_classes,self.num_d],
                 feed_dict={self.image_tensor: image_np_expanded})
-
-            return self.filter(boxes[0], scores[0], classes[0], num[0])
+            #print(num[0])
+            return self.filter(boxes[0], scores[0], classes[0], int(num[0]))
 
         else:
             # uses a simple color threshold to detect stop signs
