@@ -71,11 +71,12 @@ class FSM:
     """
 
     def __init__(self):
+
+    	# Initializing modes to Idle, exploration mode
         rospy.init_node("fsm", anonymous=True)
         self.mode = Mode.IDLE
         self.switch_mode(Mode.IDLE)
         self.projectMode = ProjectMode.STAGE1
-
 
         # current state
         self.x = 0.0
@@ -133,16 +134,17 @@ class FSM:
         # heading controller parameters
         self.kp_th = 2.0
 
-        self.traj_controller = TrajectoryTracker(self.kpx, self.kpy, self.kdx, self.kdy, self.v_max, self.om_max)
-        self.pose_controller = PoseController(0.0, 0.0, 0.0, self.v_max, self.om_max)
+        self.traj_controller    = TrajectoryTracker(self.kpx, self.kpy, self.kdx, self.kdy, self.v_max, self.om_max)
+        self.pose_controller    = PoseController(0.0, 0.0, 0.0, self.v_max, self.om_max)
         self.heading_controller = HeadingController(self.kp_th, self.om_max)
 
-        self.nav_planned_path_pub = rospy.Publisher("/planned_path", Path, queue_size=10)
-        self.nav_smoothed_path_pub = rospy.Publisher("/cmd_smoothed_path", Path, queue_size=10)
-        self.nav_smoothed_path_rej_pub = rospy.Publisher("/cmd_smoothed_path_rejected", Path, queue_size=10)
-        self.nav_vel_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
-        self.exploration_pub = rospy.Publisher("/exploration_progress", String, queue_size=10)
-        self.marker_pub = rospy.Publisher('/marker_topic_array', MarkerArray, queue_size=10) # Jack's Marker Pub
+        self.nav_planned_path_pub       = rospy.Publisher("/planned_path", Path, queue_size=10)
+        self.nav_smoothed_path_pub      = rospy.Publisher("/cmd_smoothed_path", Path, queue_size=10)
+        self.nav_smoothed_path_rej_pub  = rospy.Publisher("/cmd_smoothed_path_rejected", Path, queue_size=10)
+        self.nav_vel_pub                = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
+        self.exploration_pub            = rospy.Publisher("/exploration_progress", String, queue_size=10)
+        self.discovered_objects_pub     = rospy.Publisher("/discovered_objects", String, queue_size=10)
+        self.marker_pub                 = rospy.Publisher('/marker_topic_array', MarkerArray, queue_size=10) # Jack's Marker Pub
         
         self.trans_listener = tf.TransformListener()
 
@@ -150,16 +152,17 @@ class FSM:
 
         # MY VARIABLES
         #need to update objects
-        self.found_objects = {'house':False, 'potted_plant':False, 'skyscraper':False, 'tent':False, 'boat':False} # initialize
-        self.object_locations = {'house':(None, None), 'potted_plant':(None, None), 'skyscraper':(None, None), 'tent':(None, None), 'boat':(None, None)} # initialize
-        self.stored = False # to check if we have stored the objects to rescue or not
+        self.found_objects_dict = {'house':False, 'tree':False, 'fire_hydrant':False, 'racket':False, 'boat':False} # initialize
+        self.found_objects_list = [] # objects are appended as they are discovered
+        self.object_locations = {'house':(None, None, None), 'tree':(None, None, None), 'fire_hydrant':(None, None, None), 'racket':(None, None, None), 'boat':(None, None, None)} # initialize
+        self.stored            = False # to check if we have stored the objects to rescue or not
         self.num_obj_to_rescue = None
-        self.x_init = None
-        self.y_init = None
-        self.theta_init = None
-        self.window_size = 8
-        # NOTE: Need to update these!!
-        # self.waypoints = [(4.25, 0.9, 0.0),(4.35, 1.9, 0.0), (4.05,1.3, 0.0)] # NOTE initial list of waypoints for testing only!!!
+        self.x_init            = None
+        self.y_init            = None
+        self.theta_init        = None
+        self.window_size       = 8
+
+        # waypoints for exploration
         self.waypoints = [
             (0.287, 1.743, 0.5*np.pi), #first one is the starting point
             (0.431, 2.768, 0.5*np.pi), #just realized all the angles are 180 deg off
@@ -176,20 +179,20 @@ class FSM:
             (0.287, 1.743, 0.5*np.pi) #last one is the initial starting point
         ]
         # self.markerarray = MarkerArray()
-        self.marker_array_msg = MarkerArray()
-        self.currentWPind = 0
-        self.currentRescueID = -1
-        self.num_obj_rescued = 0
-        self.objects_to_rescue = []
+        self.marker_array_msg   = MarkerArray()
+        self.currentWPind       = 0
+        self.currentRescueID    = -1
+        self.num_obj_rescued    = 0
+        self.objects_to_rescue  = []
 
-        self.pos_eps = rospy.get_param("~pos_eps", 0.1) # Threshold at which we consider the robot at a location
-        self.theta_eps = rospy.get_param("~theta_eps", 0.3) # Threshold at which we consider the robot at a location
-        self.stop_time = rospy.get_param("~stop_time", 3.) # Pause duration when at a stop sign
-        self.save_time = rospy.get_param("~save_time", 1.) # Pause duration when saving the location of an object
-        self.rescue_time = rospy.get_param("~rescue_time", 3.) # Pause duration when rescuing an object
-        self.stop_min_dist = rospy.get_param("~stop_min_dist", 0.7) # Minimum distance from a stop sign to obey it
+        self.pos_eps         = rospy.get_param("~pos_eps", 0.1) # Threshold at which we consider the robot at a location
+        self.theta_eps       = rospy.get_param("~theta_eps", 0.3) # Threshold at which we consider the robot at a location
+        self.stop_time       = rospy.get_param("~stop_time", 3.) # Pause duration when at a stop sign
+        self.save_time       = rospy.get_param("~save_time", 1.) # Pause duration when saving the location of an object
+        self.rescue_time     = rospy.get_param("~rescue_time", 3.) # Pause duration when rescuing an object
+        self.stop_min_dist   = rospy.get_param("~stop_min_dist", 0.7) # Minimum distance from a stop sign to obey it
         self.object_min_dist = rospy.get_param("~object_min_dist", 1.0)
-        self.crossing_time = rospy.get_param("~crossing_time", 3.) # Time taken to cross an intersection
+        self.crossing_time   = rospy.get_param("~crossing_time", 3.) # Time taken to cross an intersection
 
         # SUBSCRIBERS
         rospy.Subscriber("/map", OccupancyGrid, self.map_callback)
@@ -199,31 +202,40 @@ class FSM:
 
         print("finished init")
     
-    def make_markerarray(self, points):
+    # makes marker array of waypoints
+    def make_markerarray(self, points, color):
         
         for i in range(len(points)):
-            x, y, th = points[i]
-            marker = Marker()
-            marker.header.frame_id = "map"
-            marker.header.stamp = rospy.Time()
-            marker.id = i #0
-            marker.text = str(i)
-            marker.type = 2 # sphere
-            marker.pose.position.x = x
-            marker.pose.position.y = y
-            marker.pose.position.z = 0
-            marker.pose.orientation.x = 0.0
-            marker.pose.orientation.y = 0.0
-            marker.pose.orientation.z = 0.0
-            marker.pose.orientation.w = 1.0
-            marker.scale.x = 0.1
-            marker.scale.y = 0.1
-            marker.scale.z = 0.1
-            marker.color.a = 1.0 
-            marker.color.r = 1.0
-            marker.color.g = 0.0
-            marker.color.b = 0.0
+            marker = self.make_marker(points[i], color)            
             self.marker_array_msg.markers.append(marker) 
+
+    # constructs an individual marker. called to marker waypoints as well as discovered objects
+    def make_marker(self, point, color):
+    	x, y, th = point
+    	marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = rospy.Time()
+        marker.id = i #0
+        marker.text = str(i)
+        marker.type = 2 # sphere
+        marker.pose.position.x = x
+        marker.pose.position.y = y
+        marker.pose.position.z = 0
+        marker.pose.orientation.x = 0.0
+        marker.pose.orientation.y = 0.0
+        marker.pose.orientation.z = 0.0
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.1
+        marker.scale.y = 0.1
+        marker.scale.z = 0.1
+        marker.color.a = 1.0 
+        if color=='red':
+	        marker.color.r = 1.0
+	        marker.color.g = 0.0
+        elif color=='green':
+        	marker.color.r = 0.0
+	        marker.color.g = 1.0
+        marker.color.b = 0.0
 
     # CALLBACKS
     def dyn_cfg_callback(self, config, level):
@@ -252,12 +264,19 @@ class FSM:
             self.objects_to_rescue = None
         else:
             rospy.loginfo('Objects to be rescued: {}'.format(object_string))
+            # Initializing list of objects to be rescued
             self.objects_to_rescue = object_string.split(",")
+            self.num_obj_to_rescue = len(self.objects_to_rescue)
+            self.isRescued         = dict(zip(self.objects_to_rescue, [False for i in range(self.num_obj_to_rescue)]))
+            self.stored            = True
+            
             if set(self.objects_to_rescue).issubset(set(self.object_locations.keys())):
             # if self.objects_to_rescue[i] in self.object_locations for i in len(self.objects_to_rescue).keys:
                 # This can be improved, might want to go to the closest one first
                 self.switch_mode(Mode.ALIGN)
                 self.iterate_rescueTarget()
+            else:
+            	rospy.loginfo('Input incorrect objects, please see /discovered_objects for valid objects to be input')
         
         return config
 
@@ -318,7 +337,7 @@ class FSM:
             num_obj = len(objectsList)
 
             # check if we have a non-empty message and that at least one object has not been found yet
-            if num_obj>0 and any(x==False for x in self.found_objects.values()): 
+            if num_obj>0 and any(x==False for x in self.found_objects_dict.values()): 
                 # Begin the saving process if so
                 self.init_saving(objectsList, objectMessages)
     
@@ -471,24 +490,43 @@ class FSM:
             obj = objectMessages[i]
             # id = obj.id
             name = obj.name
-            # confidence = obj.confidence
+            confidence = obj.confidence
             distance = obj.distance
             # thetaleft = obj.thetaleft
             # thetaright = obj.thetaright
             # corners = obj.corners
-            if name in self.found_objects.keys(): # If this is an object we are expecting to see
+            if name in self.found_objects_dict.keys(): # If this is an object we are expecting to see
                 # If we are close enough to the previously-undiscovered object, save!!
-                if distance > 0 and distance < self.object_min_dist and self.found_objects[name] == False:
+                if distance > 0 and distance < self.object_min_dist and self.found_objects_dict[name] == False and confidence >= 0.6:
                     self.switch_mode(Mode.SAVING)
                     # Get the world frame coordinates of the detected object
-                    x = self.x + distance*np.cos(self.theta)
-                    y = self.y + distance*np.cos(self.theta)
+                    x  = self.x + 0.6*distance*np.cos(self.theta)
+                    y  = self.y + 0.6*distance*np.cos(self.theta)
+                    th = self.theta
                     # Assign the corresponding elements in the dictionaries if we haven't already done so
-                    self.found_objects[name] = True
-                    self.object_locations[name] = (x,y)
-                    # import pdb;pdb.set_trace()
+                    # Using if-else statement to account for inaccuracies in the CNN detector:
+
+                    # publishing green marker where objects are located
+                    marker = self.make_marker((x, y, th), 'green')
+                    self.marker_array_msg.markers.append(marker)
+                    self.marker_pub.publish(self.marker_array_msg)
+
+                    if name=='fire_hydrant' or name=='traffic_light':
+	                    self.found_objects_dict['fire_hydrant']    = True
+	                    self.found_objects_list.append('fire_hydrant')
+	                    self.object_locations['fire_hydrant'] = (x,y,th)
+                    elif name=='potted_plant' or name=='tree' or name=='bird':
+                    	self.found_objects_dict['tree']    = True
+                    	self.found_objects_list.append('tree')
+	                    self.object_locations['tree'] = (x,y,th)
+                    else:
+                    	self.found_objects_dict[name]    = True
+                    	self.found_objects_list.append(name)
+	                    self.object_locations[name] = (x,y,th)
+
+                    # Logging
                     rospy.loginfo('Added {} to found objects dict'.format(name))
-                    rospy.loginfo('Found objects dict now: {}'.format(self.found_objects))
+                    rospy.loginfo('Found objects dict now: {}'.format(self.found_objects_dict))
 
     def iterate_waypoint(self):
         # Sets the goal position to be the next waypoint
@@ -497,33 +535,11 @@ class FSM:
         self.x_g = x
         self.y_g = y
         self.theta_g = th
-        self.make_markerarray(self.waypoints)
+        self.make_markerarray(self.waypoints, 'red')
         self.marker_pub.publish(self.marker_array_msg)
-        # #put marker stuff here
-        # marker = Marker()
-        # marker.header.frame_id = "map"
-        # marker.header.stamp = rospy.Time()
-        # marker.id = 0
-        # marker.type = 2 # sphere
-        # marker.pose.position.x = x
-        # marker.pose.position.y = y
-        # marker.pose.position.z = 0
-        # marker.pose.orientation.x = 0.0
-        # marker.pose.orientation.y = 0.0
-        # marker.pose.orientation.z = 0.0
-        # marker.pose.orientation.w = 1.0
-        # marker.scale.x = 0.1
-        # marker.scale.y = 0.1
-        # marker.scale.z = 0.1
-        # marker.color.a = 1.0 
-        # marker.color.r = 1.0
-        # marker.color.g = 0.0
-        # marker.color.b = 0.0
-        # self.marker_pub.publish(marker)
-        # #end marker stuff
 
+        #publishing exploration progress to a topic
         percent_explored = 100*self.currentWPind / len(self.waypoints)
-
         self.exploration_pub.publish("Percent Explored: {}".format(percent_explored))
 
         self.replan()
@@ -542,6 +558,11 @@ class FSM:
         self.y_g = self.y_init
         self.theta_g = self.theta_init
         self.replan()
+
+    def set_none_goal(self):
+    	self.x_g     = None
+    	self.y_g     = None
+    	self.theta_g = None
 
 
     def replan(self):
@@ -660,34 +681,12 @@ class FSM:
                 print(e)
                 pass
             
-            # In this main loop, check on our parameters, save these to variables
-            # stageVal = rospy.get_param("~current_stage", 1) # default of 1, we will manually switch to 2
-            # if stageVal == 1:
-            #     self.projectMode = ProjectMode.STAGE1
-            # elif stageVal == 2:
-            #     self.projectMode = ProjectMode.STAGE2
-            # else:
-            #     raise Exception("Wrong project mode input!")
-
-            # This runs once we input the rosparam of the things we want to rescue
-            # will initialize some stuff about what we are gonna rescue
-            if rospy.has_param("objectsToRescue") and not self.stored:
-                self.objectsToRescue = rospy.get_param("objectsToRescue") # should be a list
-                self.num_obj_to_rescue = len(self.objectsToRescue)
-                # initialize the isRescued dictionary
-                self.isRescued = dict(zip(self.objectsToRescue, [False for i in range(self.num_obj_to_rescue)]))
-                self.stored = True
-            
-            #if self.projectMode == ProjectMode.STAGE2 and  #FINISH
-
             # STATE MACHINE LOGIC
             # some transitions handled by callbacks
             if self.mode == Mode.IDLE:
                 if self.projectMode == ProjectMode.STAGE1:
                     if self.currentWPind == len(self.waypoints): # if at the last WP
-                        self.x_g = None
-                        self.y_g = None
-                        self.theta_g = None
+                        self.set_none_goal()
                         self.stay_idle()
                     elif not self.currentWPind > len(self.waypoints):
                         if self.occupancy:
@@ -722,9 +721,7 @@ class FSM:
                     if self.projectMode == ProjectMode.STAGE1:
                         print('in mode PARK and currentWPind {} and waypoints {}'.format(self.currentWPind, self.waypoints))
                         if self.currentWPind == len(self.waypoints): # if at the last WP
-                            self.x_g = None
-                            self.y_g = None
-                            self.theta_g = None
+                            self.set_none_goal()
                             self.switch_mode(Mode.IDLE) # NOTE maybe switch to stage 2 automatically??
                         elif not self.currentWPind > len(self.waypoints):
                             self.iterate_waypoint()
@@ -764,14 +761,17 @@ class FSM:
 
             elif self.mode == Mode.RESCUING:
                 if self.has_rescued():
-                    self.mark_rescued(self, self.objectsToRescue[self.currentRescueID])
+                    self.mark_rescued(self.objectsToRescue[self.currentRescueID])
                     self.iterate_rescueTarget()
-                    self.init_crossing()
-                    self.switch_mode(Mode.CROSS)
+                    # self.init_crossing()
+                    # self.switch_mode(Mode.CROSS)
                 else:
                     self.stay_idle()
 
             self.publish_control()
+            if len(self.found_objects_list) > 0:
+                self.discovered_objects_pub.publish(",".join(self.found_objects_list))
+
             rate.sleep()
 
 

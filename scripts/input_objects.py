@@ -3,6 +3,14 @@
 import sys
 import os
 
+'''
+Possible options: (please input these exactly as shown)
+
+tree
+fire_hydrant
+boat
+'''
+
 objects = ""
 
 for i, obj in enumerate(sys.argv[1:]):

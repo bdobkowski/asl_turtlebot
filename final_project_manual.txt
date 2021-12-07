@@ -1,0 +1,15 @@
+Order of operations for the final project on Wednesday, December 9 9:30am.
+
+roscore -p $ROS_PORT
+roslaunch asl_turtlebot projectFSM.launch
+python3 <path to detector.py>
+	only run this if we didn't include it in the launch file
+<Allow for exploration phase to complete>
+rostopic echo /exploration_progress
+	status of exploration
+rostopic echo /discovered_objects
+	view objects as they are discovered
+./switch_to_rescue_mode.sh
+	once exploration has finished, run this shell script to reconfigure the dynamic parameters to switch to "stage2"
+./input_objects.py <object1> <object2> <object3>
+	script to input objects for rescuing, rescuing should commence as soon as these are input
