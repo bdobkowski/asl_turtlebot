@@ -2,7 +2,7 @@
   <arg name="sim" default="true"/>
 
   <include file="$(find asl_turtlebot)/launch/root.launch">
-    <arg name="world" value="finalproj_world_120221" />
+    <arg name="world" value="finalproj_world_120421" /> <!-- previously 120221-->
     <arg name="x_pos" default="4.25"/>
     <arg name="y_pos" default="0.9"/>
     <arg name="z_pos" default="0.0"/>

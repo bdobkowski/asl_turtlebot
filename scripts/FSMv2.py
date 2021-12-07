@@ -108,8 +108,8 @@ class FSM:
         self.plan_start = [0.0, 0.0]
 
         # Robot limits
-        self.v_max = 0.2  # maximum velocity
-        self.om_max = 0.4  # maximum angular velocity
+        self.v_max = 1.2  # maximum velocity
+        self.om_max = 1.2  # maximum angular velocity
 
         self.v_des = 0.12  # desired cruising velocity
         self.theta_start_thresh = 0.05  # threshold in theta to start moving forward when path-following
@@ -150,8 +150,8 @@ class FSM:
 
         # MY VARIABLES
         #need to update objects
-        self.found_objects = {'house':False, 'tree':False, 'skyscraper':False, 'tent':False, 'boat':False} # initialize
-        self.object_locations = {'house':(None, None), 'tree':(None, None), 'skyscraper':(None, None), 'tent':(None, None), 'boat':(None, None)} # initialize
+        self.found_objects = {'house':False, 'potted_plant':False, 'skyscraper':False, 'tent':False, 'boat':False} # initialize
+        self.object_locations = {'house':(None, None), 'potted_plant':(None, None), 'skyscraper':(None, None), 'tent':(None, None), 'boat':(None, None)} # initialize
         self.stored = False # to check if we have stored the objects to rescue or not
         self.num_obj_to_rescue = None
         self.x_init = None
@@ -187,7 +187,8 @@ class FSM:
         self.stop_time = rospy.get_param("~stop_time", 3.) # Pause duration when at a stop sign
         self.save_time = rospy.get_param("~save_time", 1.) # Pause duration when saving the location of an object
         self.rescue_time = rospy.get_param("~rescue_time", 3.) # Pause duration when rescuing an object
-        self.stop_min_dist = rospy.get_param("~stop_min_dist", 0.5) # Minimum distance from a stop sign to obey it
+        self.stop_min_dist = rospy.get_param("~stop_min_dist", 0.7) # Minimum distance from a stop sign to obey it
+        self.object_min_dist = rospy.get_param("~object_min_dist", 1.0)
         self.crossing_time = rospy.get_param("~crossing_time", 3.) # Time taken to cross an intersection
 
         # SUBSCRIBERS
@@ -303,7 +304,7 @@ class FSM:
     def stop_sign_detected_callback(self, msg):
         dist = msg.distance # distance of the stop sign
         # if close enough and in a navigation mode (e.g. not CROSS), start the stop sign process
-        if dist > 0 and dist < self.params.stop_min_dist and (self.mode == Mode.ALIGN or self.mode == Mode.TRACK or self.mode == Mode.PARK):
+        if dist > 0 and dist < self.stop_min_dist and (self.mode == Mode.ALIGN or self.mode == Mode.TRACK or self.mode == Mode.PARK):
             self.init_stop_sign()
     
     def object_detected_callback(self, msg):
@@ -415,9 +416,9 @@ class FSM:
 
     def close_to(self, x, y, theta):
         """ checks if the robot is at a pose within some threshold """
-        return abs(x - self.x) < self.params.pos_eps and \
-               abs(y - self.y) < self.params.pos_eps and \
-               abs(theta - self.theta) < self.params.theta_eps
+        return abs(x - self.x) < self.pos_eps and \
+               abs(y - self.y) < self.pos_eps and \
+               abs(theta - self.theta) < self.theta_eps
 
     def init_stop_sign(self):
         """ initiates a stop sign maneuver """
@@ -427,12 +428,12 @@ class FSM:
     def has_stopped(self):
         """ checks if stop sign maneuver is over """
         return self.mode == Mode.STOP and \
-               rospy.get_rostime() - self.stop_sign_start > rospy.Duration.from_sec(self.params.stop_time)
+               rospy.get_rostime() - self.stop_sign_start > rospy.Duration.from_sec(self.stop_time)
     
     def has_saved(self):
         """ checks if saving is over """
         return self.mode == Mode.SAVING and \
-               rospy.get_rostime() - self.saving_start > rospy.Duration.from_sec(self.params.save_time)
+               rospy.get_rostime() - self.saving_start > rospy.Duration.from_sec(self.save_time)
 
     def init_crossing(self):
         """ initiates an intersection crossing maneuver """
@@ -442,7 +443,7 @@ class FSM:
     def has_crossed(self):
         """ checks if crossing maneuver is over """
         return self.mode == Mode.CROSS and \
-               rospy.get_rostime() - self.cross_start > rospy.Duration.from_sec(self.params.crossing_time)
+               rospy.get_rostime() - self.cross_start > rospy.Duration.from_sec(self.crossing_time)
 
     def init_rescuing(self):
         self.rescue_start = rospy.get_rostime()
@@ -460,7 +461,7 @@ class FSM:
     def has_rescued(self):
         """ checks if rescuing maneuver is over """
         return self.mode == Mode.RESCUING and \
-               rospy.get_rostime() - self.rescue_start > rospy.Duration.from_sec(self.params.rescue_time)
+               rospy.get_rostime() - self.rescue_start > rospy.Duration.from_sec(self.rescue_time)
 
     def init_saving(self, objectsList, objectMessages):
         self.saving_start = rospy.get_rostime()
@@ -477,7 +478,7 @@ class FSM:
             # corners = obj.corners
             if name in self.found_objects.keys(): # If this is an object we are expecting to see
                 # If we are close enough to the previously-undiscovered object, save!!
-                if distance > 0 and distance < self.params.stop_min_dist and self.found_objects[name] == False:
+                if distance > 0 and distance < self.object_min_dist and self.found_objects[name] == False:
                     self.switch_mode(Mode.SAVING)
                     # Get the world frame coordinates of the detected object
                     x = self.x + distance*np.cos(self.theta)
@@ -485,6 +486,9 @@ class FSM:
                     # Assign the corresponding elements in the dictionaries if we haven't already done so
                     self.found_objects[name] = True
                     self.object_locations[name] = (x,y)
+                    # import pdb;pdb.set_trace()
+                    rospy.loginfo('Added {} to found objects dict'.format(name))
+                    rospy.loginfo('Found objects dict now: {}'.format(self.found_objects))
 
     def iterate_waypoint(self):
         # Sets the goal position to be the next waypoint

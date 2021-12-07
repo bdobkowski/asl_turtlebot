@@ -18,6 +18,8 @@ import math
 
 # NEW: Trying to fix CUDA errors
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+# export CUDA_VISIBLE_DEVICES=4
+# os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 
 def load_object_labels(filename):
     """ loads the coco object readable name """
@@ -48,7 +50,7 @@ class DetectorParams:
         self.label_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), label_path)
 
         # Minimum score for positive detection
-        self.min_score = rospy.get_param("~min_score", 0.4) # Previous value: 0.5
+        self.min_score = rospy.get_param("~min_score", 0.6) # Previous value: 0.5 (just changed from 0.4 to 0.6)
 
         if verbose:
             print("DetectorParams:")
