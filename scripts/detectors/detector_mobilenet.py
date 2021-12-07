@@ -5,7 +5,8 @@ import os
 
 # watch out on the order for the next two imports lol
 from tf import TransformListener
-import tensorflow as tf
+import tensorflow.compat.v1 as tf # modified from import tensorflow as tf
+tf.disable_v2_behavior() # new line
 import numpy as np
 from sensor_msgs.msg import CompressedImage, Image, CameraInfo, LaserScan
 from asl_turtlebot.msg import DetectedObject, DetectedObjectList
@@ -100,21 +101,22 @@ class Detector:
 
         self.tf_listener = TransformListener()
         rospy.Subscriber(
-            "/raspicam_node/image_raw",
+            "/camera/image_raw", #"/raspicam_node/image_raw",
             Image,
             self.camera_callback,
             queue_size=1,
             buff_size=2 ** 24,
         )
         rospy.Subscriber(
-            "/raspicam_node/image/compressed",
+            "/camera/image_raw/compressed", #"/raspicam_node/image/compressed",
             CompressedImage,
             self.compressed_camera_callback,
             queue_size=1,
             buff_size=2 ** 24,
         )
         rospy.Subscriber(
-            "/raspicam_node/camera_info", CameraInfo, self.camera_info_callback
+            "/camera/camera_info",  #/raspicam_node/camera_info", 
+            CameraInfo, self.camera_info_callback
         )
         rospy.Subscriber("/scan", LaserScan, self.laser_callback)
 
@@ -133,8 +135,8 @@ class Detector:
                     [self.d_boxes, self.d_scores, self.d_classes, self.num_d],
                     feed_dict={self.image_tensor: image_np_expanded},
                 )
-
-            return self.filter(boxes[0], scores[0], classes[0], num[0])
+            # note: modified the below line to include int
+            return self.filter(boxes[0], scores[0], classes[0], int(num[0]))
 
         else:
             # uses a simple color threshold to detect stop signs
@@ -330,8 +332,8 @@ class Detector:
             self.detected_objects_pub.publish(detected_objects)
 
         # displays the camera image
-        # cv2.imshow("Camera", img_bgr8)
-        # cv2.waitKey(1)
+        cv2.imshow("Camera", img_bgr8)
+        cv2.waitKey(1)
 
     def camera_info_callback(self, msg):
         """extracts relevant camera intrinsic parameters from the camera_info message.

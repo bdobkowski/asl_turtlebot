@@ -11,7 +11,7 @@ except:
     pass
 import numpy as np
 from sensor_msgs.msg import Image, CameraInfo, LaserScan
-from asl_turtlebot.msg import DetectedObject
+from asl_turtlebot.msg import DetectedObject, DetectedObjectList
 from cv_bridge import CvBridge, CvBridgeError
 import cv2
 import math
@@ -45,7 +45,7 @@ class DetectorParams:
         self.label_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), label_path)
 
         # Minimum score for positive detection
-        self.min_score = rospy.get_param("~min_score", 0.5)
+        self.min_score = rospy.get_param("~min_score", 0.4) # CHANGED FRMO 0.5
 
         if verbose:
             print("DetectorParams:")
@@ -236,7 +236,10 @@ class Detector:
                 if cl not in self.object_publishers:
                     self.object_publishers[cl] = rospy.Publisher('/detector/'+self.object_labels[cl],
                         DetectedObject, queue_size=10)
-
+                #Jack Dibachi added this
+                self.detected_objects_pub = rospy.Publisher(
+                    "/detector/objects", DetectedObjectList, queue_size=10
+                )
                 # publishes the detected object and its location
                 object_msg = DetectedObject()
                 object_msg.id = cl

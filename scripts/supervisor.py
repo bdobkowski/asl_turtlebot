@@ -21,7 +21,7 @@ class Mode(Enum):
 
 class SupervisorParams:
 
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=True):
         # If sim is True (i.e. using gazebo), we want to subscribe to
         # /gazebo/model_states. Otherwise, we will use a TF lookup.
         self.use_gazebo = rospy.get_param("sim")
@@ -153,7 +153,6 @@ class Supervisor:
         # if close enough and in nav mode, stop
         if dist > 0 and dist < self.params.stop_min_dist and self.mode == Mode.NAV:
             self.init_stop_sign()
-
 
     ########## STATE MACHINE ACTIONS ##########
 

@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # FSM: Combination of supervisor and navigator functions
 # Including A* navigation and the ability to stop at stop signs, objects, ...
 
@@ -14,11 +16,8 @@
 # - We will be passing in the list of objects to rescue as a rosparam
 # - The current project stage (1 or 2) will be passed in as a rosparam too
 
-
-#!/usr/bin/env python3
-
-from os import name
 import rospy
+from os import name
 from nav_msgs.msg import OccupancyGrid, MapMetaData, Path
 from geometry_msgs.msg import Twist, Pose2D, PoseStamped, PoseArray
 from std_msgs.msg import String, Float32MultiArray
@@ -35,9 +34,11 @@ from enum import Enum
 
 from dynamic_reconfigure.server import Server
 from asl_turtlebot.cfg import NavigatorConfig
+# from asl_turtlebot.cfg import FSMConfig
 
 # MY IMPORTS
-from asl_turtlebot.msg import DetectedObject, DetectedObjectList, IsItFound
+from asl_turtlebot.msg import DetectedObject, DetectedObjectList
+#from asl_turtlebot.msg import IsItFound
 from gazebo_msgs.msg import ModelStates
 
 # state machine modes, not all implemented
@@ -46,6 +47,7 @@ class Mode(Enum):
     ALIGN = 1
     TRACK = 2
     PARK = 3
+
     # Stuff from the supervisor
     STOP = 4
     CROSS = 5
@@ -64,9 +66,11 @@ class FSM:
     """
 
     def __init__(self):
-        rospy.init_node("turtlebot_FSM", anonymous=True)
+        rospy.init_node("fsm", anonymous=True)
+        self.mode = Mode.IDLE
         self.switch_mode(Mode.IDLE)
         self.projectMode = ProjectMode.STAGE1
+
 
         # current state
         self.x = 0.0
@@ -158,7 +162,22 @@ class FSM:
         self.y_init = None
         self.theta_init = None
         # NOTE: Need to update these!!
-        self.waypoints = [(1,2,.5), (3,4,-.5), (5,6,0)] # NOTE initial list of waypoints for testing only!!!
+        # self.waypoints = [(4.25, 0.9, 0.0),(4.35, 1.9, 0.0), (4.05,1.3, 0.0)] # NOTE initial list of waypoints for testing only!!!
+        self.waypoints = [
+            (0.287, 1.743, -0.5*np.pi), #first one is the starting point
+            (0.431, 2.768, -0.5*np.pi),
+            (2.012, 2.997, -0.75*np.pi),
+            (3.588, 3.574, -0.5*np.pi),
+            (4.431, 3.482, -np.pi),
+            (4.553, 1.784, 0),
+            (4.087, 0.413, 0),
+            (2.469, 0.482, -0.5*np.pi),
+            (2.572, 2.995, 0),
+            (0.319, 2.770, 0.5*np.pi),
+            (0.365, 1.349, -np.pi),
+            (1.469, 0.470, 0),
+            (0.287, 1.743, -0.5*np.pi) #last one is the initial starting point
+        ]
         self.currentWPind = 0
         self.currentRescueID = 0
         self.num_obj_rescued = 0
@@ -357,9 +376,7 @@ class FSM:
                 self.x, self.y, self.theta, t
             )
         elif self.mode == Mode.ALIGN:
-            V, om = self.heading_controller.compute_control(
-                self.x, self.y, self.theta, t
-            )
+            V, om = self.heading_controller.compute_control(self.x, self.y, self.theta, t)
         elif self.mode == Mode.CROSS:
             V, om = self.traj_controller.compute_control(self.x, self.y, self.theta, t)
         else:
@@ -379,7 +396,6 @@ class FSM:
     def stay_idle(self):
         """ sends zero velocity to stay put """
         vel_g_msg = Twist()
-        self.cmd_vel_publisher.publish(vel_g_msg)
 
     def close_to(self, x, y, theta):
         """ checks if the robot is at a pose within some threshold """
@@ -457,7 +473,7 @@ class FSM:
     def iterate_waypoint(self):
         # Sets the goal position to be the next waypoint
         self.currentWPind +=1
-        x,y,th = self.waypoints[self.currentWPind]
+        x,y,th = self.waypoints[self.currentWPind - 1]
         self.x_g = x
         self.y_g = y
         self.theta_g = th
@@ -577,6 +593,7 @@ class FSM:
 
     def run(self):
         rate = rospy.Rate(10)  # 10 Hz
+        savedInitPosition = False
         while not rospy.is_shutdown():
             # try to get state information to update self.x, self.y, self.theta
             try:
@@ -624,12 +641,27 @@ class FSM:
                 self.isRescued = dict(zip(self.objectsToRescue, [False for i in range(self.num_obj_to_rescue)]))
                 self.stored = True
             
-            if self.projectMode == ProjectMode.STAGE2 and  #FINISH
+            #if self.projectMode == ProjectMode.STAGE2 and  #FINISH
 
             # STATE MACHINE LOGIC
             # some transitions handled by callbacks
             if self.mode == Mode.IDLE:
-                self.stay_idle()
+                if self.projectMode == ProjectMode.STAGE1:
+                    if self.currentWPind == len(self.waypoints): # if at the last WP
+                        self.x_g = None
+                        self.y_g = None
+                        self.theta_g = None
+                        self.stay_idle()
+                    elif not self.currentWPind > len(self.waypoints):
+                        if self.occupancy:
+                            self.iterate_waypoint()
+                            self.switch_mode(Mode.ALIGN)
+                        else:
+                            self.stay_idle()
+                    else:
+                        self.stay_idle()
+                else:
+                    self.stay_idle()
             elif self.mode == Mode.ALIGN:
                 if self.aligned():
                     self.current_plan_start_time = rospy.get_rostime()
@@ -649,14 +681,17 @@ class FSM:
                 if self.at_goal():
                     # If we are at the last waypoint, idle
                     if self.projectMode == ProjectMode.STAGE1:
+                        print('in mode PARK and currentWPind {} and waypoints {}'.format(self.currentWPind, self.waypoints))
                         if self.currentWPind == len(self.waypoints): # if at the last WP
                             self.x_g = None
                             self.y_g = None
                             self.theta_g = None
                             self.switch_mode(Mode.IDLE) # NOTE maybe switch to stage 2 automatically??
-                        else:
+                        elif not self.currentWPind > len(self.waypoints):
                             self.iterate_waypoint()
                             self.switch_mode(Mode.ALIGN)
+                        else:
+                            self.switch_mode(Mode.IDLE)
                     else: # in Stage 2
                         if not self.num_obj_rescued == self.num_obj_to_rescue:# We are still trying to rescue objects (we have not rescued all objects) NOTE finish
                             self.init_rescuing()
@@ -704,4 +739,5 @@ class FSM:
 if __name__ == "__main__":
     nav = FSM()
     rospy.on_shutdown(nav.shutdown_callback)
+    print("RUNINGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG")
     nav.run()

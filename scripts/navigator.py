@@ -173,7 +173,7 @@ class Navigator:
                 self.map_height,
                 self.map_origin[0],
                 self.map_origin[1],
-                4, #window size used to be 8. changing to make for better navigation
+                8, #window size used to be 8. changing to make for better navigation
                 self.map_probs,
             )
             if self.x_g is not None:
