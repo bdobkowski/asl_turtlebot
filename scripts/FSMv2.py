@@ -167,15 +167,13 @@ class FSM:
             (0.287, 1.743, 0.5*np.pi), #first one is the starting point
             (0.431, 2.768, 0.5*np.pi), #just realized all the angles are 180 deg off
             (2.012, 2.997, 0.25*np.pi), #that's why the robot spins round so much
-            (3.588, 3.574, 0.5*np.pi),
             (4.431, 3.482, -np.pi),
             (4.553, 1.784, np.pi),
             (4.087, 0.413, np.pi),
             (2.469, 0.482, 0.5*np.pi),
-            (2.572, 2.995, np.pi),
-            (0.319, 2.770, -0.5*np.pi),
-            (0.365, 1.349, -np.pi),
+            (2.572, 1.500, np.pi),
             (1.469, 0.470, np.pi),
+            (0.365, 1.349, 0),
             (0.287, 1.743, 0.5*np.pi) #last one is the initial starting point
         ]
         # self.markerarray = MarkerArray()
