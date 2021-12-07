@@ -8,6 +8,7 @@ Panels:
         - /Status1
         - /TF1
         - /TF1/Tree1
+        - /MarkerArray1/Status1
       Splitter Ratio: 0.5
     Tree Height: 156
   - Class: rviz/Selection
@@ -128,6 +129,7 @@ Visualization Manager:
         Grid: true
         LaserScan: true
         Map: true
+        MarkerArray: true
         Path: true
         Pose: true
         TF: true
@@ -249,6 +251,14 @@ Visualization Manager:
       Topic: /move_base_simple/goal
       Unreliable: false
       Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /marker_topic_array
+      Name: MarkerArray
+      Namespaces:
+        "": true
+      Queue Size: 100
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -309,5 +319,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1520
-  X: -1
-  Y: -16
+  X: -2
+  Y: -32

@@ -17,11 +17,14 @@
 # - We will be passing in the list of objects to rescue as a rosparam
 # - The current project stage (1 or 2) will be passed in as a rosparam too
 
+# Should we consider a DetOccupancyGrid?
+
 import rospy
-from os import name
+from os import name, nice
 from nav_msgs.msg import OccupancyGrid, MapMetaData, Path
 from geometry_msgs.msg import Twist, Pose2D, PoseStamped, PoseArray
 from std_msgs.msg import String, Float32MultiArray
+from visualization_msgs.msg import Marker, MarkerArray
 import tf
 import numpy as np
 from numpy import linalg
@@ -110,9 +113,7 @@ class FSM:
 
         self.v_des = 0.12  # desired cruising velocity
         self.theta_start_thresh = 0.05  # threshold in theta to start moving forward when path-following
-        self.start_pos_thresh = (
-            0.2  # threshold to be far enough into the plan to recompute it
-        )
+        self.start_pos_thresh = 0.2  # threshold to be far enough into the plan to recompute it
 
         # threshold at which navigator switches from trajectory to pose control
         self.near_thresh = 0.2
@@ -132,30 +133,20 @@ class FSM:
         # heading controller parameters
         self.kp_th = 2.0
 
-        self.traj_controller = TrajectoryTracker(
-            self.kpx, self.kpy, self.kdx, self.kdy, self.v_max, self.om_max
-        )
-        self.pose_controller = PoseController(
-            0.0, 0.0, 0.0, self.v_max, self.om_max
-        )
+        self.traj_controller = TrajectoryTracker(self.kpx, self.kpy, self.kdx, self.kdy, self.v_max, self.om_max)
+        self.pose_controller = PoseController(0.0, 0.0, 0.0, self.v_max, self.om_max)
         self.heading_controller = HeadingController(self.kp_th, self.om_max)
 
-        self.nav_planned_path_pub = rospy.Publisher(
-            "/planned_path", Path, queue_size=10
-        )
-        self.nav_smoothed_path_pub = rospy.Publisher(
-            "/cmd_smoothed_path", Path, queue_size=10
-        )
-        self.nav_smoothed_path_rej_pub = rospy.Publisher(
-            "/cmd_smoothed_path_rejected", Path, queue_size=10
-        )
+        self.nav_planned_path_pub = rospy.Publisher("/planned_path", Path, queue_size=10)
+        self.nav_smoothed_path_pub = rospy.Publisher("/cmd_smoothed_path", Path, queue_size=10)
+        self.nav_smoothed_path_rej_pub = rospy.Publisher("/cmd_smoothed_path_rejected", Path, queue_size=10)
         self.nav_vel_pub = rospy.Publisher("/cmd_vel", Twist, queue_size=10)
-
         self.exploration_pub = rospy.Publisher("/exploration_progress", String, queue_size=10)
-
+        self.marker_pub = rospy.Publisher('/marker_topic_array', MarkerArray, queue_size=10) # Jack's Marker Pub
+        
         self.trans_listener = tf.TransformListener()
 
-        self.cfg_srv = Server(NavigatorConfig, self.dyn_cfg_callback)
+        self.cfg_srv = Server(NavigatorConfig, self.dyn_cfg_callback)        
 
         # MY VARIABLES
         #need to update objects
@@ -166,23 +157,26 @@ class FSM:
         self.x_init = None
         self.y_init = None
         self.theta_init = None
+        self.window_size = 8
         # NOTE: Need to update these!!
         # self.waypoints = [(4.25, 0.9, 0.0),(4.35, 1.9, 0.0), (4.05,1.3, 0.0)] # NOTE initial list of waypoints for testing only!!!
         self.waypoints = [
-            (0.287, 1.743, -0.5*np.pi), #first one is the starting point
-            (0.431, 2.768, -0.5*np.pi),
-            (2.012, 2.997, -0.75*np.pi),
-            (3.588, 3.574, -0.5*np.pi),
+            (0.287, 1.743, 0.5*np.pi), #first one is the starting point
+            (0.431, 2.768, 0.5*np.pi), #just realized all the angles are 180 deg off
+            (2.012, 2.997, 0.25*np.pi), #that's why the robot spins round so much
+            (3.588, 3.574, 0.5*np.pi),
             (4.431, 3.482, -np.pi),
-            (4.553, 1.784, 0),
-            (4.087, 0.413, 0),
-            (2.469, 0.482, -0.5*np.pi),
-            (2.572, 2.995, 0),
-            (0.319, 2.770, 0.5*np.pi),
+            (4.553, 1.784, np.pi),
+            (4.087, 0.413, np.pi),
+            (2.469, 0.482, 0.5*np.pi),
+            (2.572, 2.995, np.pi),
+            (0.319, 2.770, -0.5*np.pi),
             (0.365, 1.349, -np.pi),
-            (1.469, 0.470, 0),
-            (0.287, 1.743, -0.5*np.pi) #last one is the initial starting point
+            (1.469, 0.470, np.pi),
+            (0.287, 1.743, 0.5*np.pi) #last one is the initial starting point
         ]
+        # self.markerarray = MarkerArray()
+        self.marker_array_msg = MarkerArray()
         self.currentWPind = 0
         self.currentRescueID = -1
         self.num_obj_rescued = 0
@@ -204,6 +198,32 @@ class FSM:
 
         print("finished init")
     
+    def make_markerarray(self, points):
+        
+        for i in range(len(points)):
+            x, y, th = points[i]
+            marker = Marker()
+            marker.header.frame_id = "map"
+            marker.header.stamp = rospy.Time()
+            marker.id = i #0
+            marker.text = str(i)
+            marker.type = 2 # sphere
+            marker.pose.position.x = x
+            marker.pose.position.y = y
+            marker.pose.position.z = 0
+            marker.pose.orientation.x = 0.0
+            marker.pose.orientation.y = 0.0
+            marker.pose.orientation.z = 0.0
+            marker.pose.orientation.w = 1.0
+            marker.scale.x = 0.1
+            marker.scale.y = 0.1
+            marker.scale.z = 0.1
+            marker.color.a = 1.0 
+            marker.color.r = 1.0
+            marker.color.g = 0.0
+            marker.color.b = 0.0
+            self.marker_array_msg.markers.append(marker) 
+
     # CALLBACKS
     def dyn_cfg_callback(self, config, level):
         rospy.loginfo(
@@ -240,58 +260,40 @@ class FSM:
         
         return config
 
-    def cmd_nav_callback(self, data):
-        """
-        loads in goal if different from current goal, and replans
-        """
-        if (
-            data.x != self.x_g
-            or data.y != self.y_g
-            or data.theta != self.theta_g
-        ):
+    # Callbacks from original code - Good to go
+    def cmd_nav_callback(self, data): # Loads in goal if different from current goal; replans
+        """ loads in goal if different from current goal, and replans  """
+        if ( data.x != self.x_g  or  data.y != self.y_g  or  data.theta != self.theta_g ):
             self.x_g = data.x
             self.y_g = data.y
             self.theta_g = data.theta
             self.replan()
-
-    def map_md_callback(self, msg):
-        """
-        receives maps meta data and stores it
-        """
+    def map_md_callback(self, msg): # Receives map metadata; stores it
+        """ receives maps meta data and stores it """
         self.map_width = msg.width
         self.map_height = msg.height
         self.map_resolution = msg.resolution
         self.map_origin = (msg.origin.position.x, msg.origin.position.y)
-
-    def map_callback(self, msg):
-        """
-        receives new map info and updates the map
-        """
+    def map_callback(self, msg): # Receives new map info and updates the map
+        """ receives new map info and updates the map  """
         self.map_probs = msg.data
         # if we've received the map metadata and have a way to update it:
-        if (
-            self.map_width > 0
-            and self.map_height > 0
-            and len(self.map_probs) > 0
-        ):
+        if ( self.map_width > 0  and  self.map_height > 0  and  len(self.map_probs) > 0 ):
             self.occupancy = StochOccupancyGrid2D(
                 self.map_resolution,
                 self.map_width,
                 self.map_height,
                 self.map_origin[0],
                 self.map_origin[1],
-                8,
+                self.window_size,
                 self.map_probs,
             )
             if self.x_g is not None:
                 # if we have a goal to plan to, replan
                 rospy.loginfo("replanning because of new map")
                 self.replan()  # new map, need to replan
-
-    def shutdown_callback(self):
-        """
-        publishes zero velocities upon rospy shutdown
-        """
+    def shutdown_callback(self): # Publishes 0 velocity when ros is shut down
+        """  publishes zero velocities upon rospy shutdown  """
         cmd_vel = Twist()
         cmd_vel.linear.x = 0.0
         cmd_vel.angular.z = 0.0
@@ -307,66 +309,44 @@ class FSM:
     def object_detected_callback(self, msg):
         # Only need to perform this callback if we are in stage 1 (recording locations)
         # (Detector does not need to be run during Stage 2 (rescue) because we already know where these things are)
-        if self.projectMode == ProjectMode.Stage1:
+        if self.projectMode == ProjectMode.STAGE1:
             # Get info from message
             objectsList = msg.objects # Object names, list of strings
             objectMessages = msg.ob_msgs # Object messages list, of form DetectedObject, includes id, name, confidence, distance, thetaleft, thetaright, corners
 
-            num_obj = len(objectMessages)
+            num_obj = len(objectsList)
 
             # check if we have a non-empty message and that at least one object has not been found yet
             if num_obj>0 and any(x==False for x in self.found_objects.values()): 
                 # Begin the saving process if so
-                self.init_saving(objectMessages)
+                self.init_saving(objectsList, objectMessages)
     
-    def near_goal(self):
-        """
-        returns whether the robot is close enough in position to the goal to
-        start using the pose controller
-        """
-        return (
-            linalg.norm(np.array([self.x - self.x_g, self.y - self.y_g]))
-            < self.near_thresh
-        )
-
-    def at_goal(self):
-        """
-        returns whether the robot has reached the goal position with enough
-        accuracy to return to idle state
-        """
-        return (
-            linalg.norm(np.array([self.x - self.x_g, self.y - self.y_g]))
-            < self.at_thresh
-            and abs(wrapToPi(self.theta - self.theta_g)) < self.at_thresh_theta
-        )
-
-    def aligned(self):
-        """
-        returns whether robot is aligned with starting direction of path
-        (enough to switch to tracking controller)
-        """
-        return (
-            abs(wrapToPi(self.theta - self.th_init)) < self.theta_start_thresh
-        )
-
-    def close_to_plan_start(self):
-        return (
-            abs(self.x - self.plan_start[0]) < self.start_pos_thresh
-            and abs(self.y - self.plan_start[1]) < self.start_pos_thresh
-        )
-
-    def snap_to_grid(self, x):
-        return (
-            self.plan_resolution * round(x[0] / self.plan_resolution),
-            self.plan_resolution * round(x[1] / self.plan_resolution),
-        )
-
-    def switch_mode(self, new_mode):
+    # Booleans from original code - good to go
+    def near_goal(self): # Returns T/F: Robot is close enough to goal to start using pose control? 
+        """ returns whether the robot is close enough in position to the goal to
+        start using the pose controller  """
+        return ( linalg.norm(np.array([self.x - self.x_g, self.y - self.y_g])) < self.near_thresh )
+    def at_goal(self): # Returns T/F: Robot has reached goal position accurately?
+        """ returns whether the robot has reached the goal position with enough
+            accuracy to return to idle state """
+        return (linalg.norm(np.array([self.x - self.x_g, self.y - self.y_g])) < self.at_thresh
+                and abs(wrapToPi(self.theta - self.theta_g)) < self.at_thresh_theta )
+    def aligned(self): # Returns T/F: Robot is aligned with start of path enough to start using tracking control?
+        """  returns whether robot is aligned with starting direction of path
+             (enough to switch to tracking controller) """
+        return ( abs(wrapToPi(self.theta - self.th_init)) < self.theta_start_thresh )
+    def close_to_plan_start(self): # Returns T/F: Current robot x,y position is close enough to the start of the plan?
+        return ( abs(self.x - self.plan_start[0]) < self.start_pos_thresh
+                 and abs(self.y - self.plan_start[1]) < self.start_pos_thresh )
+    
+    # Other functions from original code - good to go (Unmodified)
+    def snap_to_grid(self, x): # Returns (x,y) position on occupancy grid
+        return (self.plan_resolution * round(x[0] / self.plan_resolution),
+                self.plan_resolution * round(x[1] / self.plan_resolution)  )
+    def switch_mode(self, new_mode): # Switches self.mode to input mode and logs
         rospy.loginfo("Switching from %s -> %s", self.mode, new_mode)
         self.mode = new_mode
-
-    def publish_planned_path(self, path, publisher):
-        # publish planned plan for visualization
+    def publish_planned_path(self, path, publisher): # Publishes planned path for visualization
         path_msg = Path()
         path_msg.header.frame_id = "map"
         for state in path:
@@ -377,8 +357,7 @@ class FSM:
             pose_st.header.frame_id = "map"
             path_msg.poses.append(pose_st)
         publisher.publish(path_msg)
-
-    def publish_smoothed_path(self, traj, publisher):
+    def publish_smoothed_path(self, traj, publisher): # Publishes smoothed planned path for visualization
         # publish planned plan for visualization
         path_msg = Path()
         path_msg.header.frame_id = "map"
@@ -392,24 +371,18 @@ class FSM:
         publisher.publish(path_msg)
 
     def publish_control(self):
-        """
-        Runs appropriate controller depending on the mode. Assumes all controllers
-        are all properly set up / with the correct goals loaded
-        """
+        """ Runs appropriate controller depending on the mode. Assumes all controllers
+        are all properly set up / with the correct goals loaded  """
         t = self.get_current_plan_time()
 
         if self.mode == Mode.PARK:
             try:
-                V, om = self.pose_controller.compute_control(
-                    self.x, self.y, self.theta, t
-                )
+                V, om = self.pose_controller.compute_control(self.x, self.y, self.theta, t)
             except:
                 return
         elif self.mode == Mode.TRACK:
             try:
-                V, om = self.traj_controller.compute_control(
-                    self.x, self.y, self.theta, t
-                )
+                V, om = self.traj_controller.compute_control(self.x, self.y, self.theta, t)
             except:
                 return
         elif self.mode == Mode.ALIGN:
@@ -489,10 +462,9 @@ class FSM:
         return self.mode == Mode.RESCUING and \
                rospy.get_rostime() - self.rescue_start > rospy.Duration.from_sec(self.params.rescue_time)
 
-    def init_saving(self, objectMessages):
+    def init_saving(self, objectsList, objectMessages):
         self.saving_start = rospy.get_rostime()
-        self.switch_mode(Mode.SAVING)
-        num_obj = len(objectMessages)
+        num_obj = len(objectsList)
         for i in range(num_obj):
             # Load the parameters from the objectMessages format
             obj = objectMessages[i]
@@ -503,15 +475,16 @@ class FSM:
             # thetaleft = obj.thetaleft
             # thetaright = obj.thetaright
             # corners = obj.corners
-
-            # If we are close enough to the previously-undiscovered object, save!!
-            if distance > 0 and distance < self.params.stop_min_dist and self.found_objects[name] == False:
-                # Get the world frame coordinates of the detected object
-                x = self.x + distance*np.cos(self.theta)
-                y = self.y + distance*np.cos(self.theta)
-                # Assign the corresponding elements in the dictionaries if we haven't already done so
-                self.found_objects[name] = True
-                self.object_locations[name] = (x,y)
+            if name in self.found_objects.keys(): # If this is an object we are expecting to see
+                # If we are close enough to the previously-undiscovered object, save!!
+                if distance > 0 and distance < self.params.stop_min_dist and self.found_objects[name] == False:
+                    self.switch_mode(Mode.SAVING)
+                    # Get the world frame coordinates of the detected object
+                    x = self.x + distance*np.cos(self.theta)
+                    y = self.y + distance*np.cos(self.theta)
+                    # Assign the corresponding elements in the dictionaries if we haven't already done so
+                    self.found_objects[name] = True
+                    self.object_locations[name] = (x,y)
 
     def iterate_waypoint(self):
         # Sets the goal position to be the next waypoint
@@ -520,6 +493,30 @@ class FSM:
         self.x_g = x
         self.y_g = y
         self.theta_g = th
+        self.make_markerarray(self.waypoints)
+        self.marker_pub.publish(self.marker_array_msg)
+        # #put marker stuff here
+        # marker = Marker()
+        # marker.header.frame_id = "map"
+        # marker.header.stamp = rospy.Time()
+        # marker.id = 0
+        # marker.type = 2 # sphere
+        # marker.pose.position.x = x
+        # marker.pose.position.y = y
+        # marker.pose.position.z = 0
+        # marker.pose.orientation.x = 0.0
+        # marker.pose.orientation.y = 0.0
+        # marker.pose.orientation.z = 0.0
+        # marker.pose.orientation.w = 1.0
+        # marker.scale.x = 0.1
+        # marker.scale.y = 0.1
+        # marker.scale.z = 0.1
+        # marker.color.a = 1.0 
+        # marker.color.r = 1.0
+        # marker.color.g = 0.0
+        # marker.color.b = 0.0
+        # self.marker_pub.publish(marker)
+        # #end marker stuff
 
         percent_explored = 100*self.currentWPind / len(self.waypoints)
 
@@ -556,9 +553,7 @@ class FSM:
         """
         # Make sure we have a map
         if not self.occupancy:
-            rospy.loginfo(
-                "Navigator: replanning canceled, waiting for occupancy map."
-            )
+            rospy.loginfo("Navigator: replanning canceled, waiting for occupancy map.")
             self.switch_mode(Mode.IDLE)
             return
 
@@ -593,15 +588,11 @@ class FSM:
             return
 
         # Smooth and generate a trajectory
-        traj_new, t_new = compute_smoothed_traj(
-            planned_path, self.v_des, self.spline_alpha, self.traj_dt
-        )
+        traj_new, t_new = compute_smoothed_traj(planned_path, self.v_des, self.spline_alpha, self.traj_dt)
 
         # If currently tracking a trajectory, check whether new trajectory will take more time to follow
         if self.mode == Mode.TRACK:
-            t_remaining_curr = (
-                self.current_plan_duration - self.get_current_plan_time()
-            )
+            t_remaining_curr = (self.current_plan_duration - self.get_current_plan_time())
 
             # Estimate duration of new trajectory
             th_init_new = traj_new[0, 2]
@@ -610,12 +601,8 @@ class FSM:
             t_remaining_new = t_init_align + t_new[-1]
 
             if t_remaining_new > t_remaining_curr:
-                rospy.loginfo(
-                    "New plan rejected (longer duration than current plan)"
-                )
-                self.publish_smoothed_path(
-                    traj_new, self.nav_smoothed_path_rej_pub
-                )
+                rospy.loginfo("New plan rejected (longer duration than current plan)" )
+                self.publish_smoothed_path( traj_new, self.nav_smoothed_path_rej_pub )
                 return
 
         # Otherwise follow the new plan
@@ -645,9 +632,7 @@ class FSM:
         while not rospy.is_shutdown():
             # try to get state information to update self.x, self.y, self.theta
             try:
-                (translation, rotation) = self.trans_listener.lookupTransform(
-                    "/map", "/base_footprint", rospy.Time(0)
-                )
+                (translation, rotation) = self.trans_listener.lookupTransform("/map", "/base_footprint", rospy.Time(0))
                 self.x = translation[0]
                 self.y = translation[1]
                 euler = tf.transformations.euler_from_quaternion(rotation)
