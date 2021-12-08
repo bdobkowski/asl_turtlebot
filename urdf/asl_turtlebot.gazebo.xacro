@@ -167,6 +167,7 @@
         <distortionT1>0.0</distortionT1>
         <distortionT2>0.0</distortionT2>
       </plugin>
+      <visualize>true</visualize> <!-- NEW NEW NEW NEW NEW NEW -->
     </sensor>
   </gazebo>
 

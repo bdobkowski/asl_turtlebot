@@ -1,0 +1,4 @@
+<launch>
+  <node pkg="asl_turtlebot" type="myDetector.py" name="detector" output="screen" />
+  <node pkg="asl_turtlebot" type="FOV.py" name="FOV" output="screen" />
+</launch>

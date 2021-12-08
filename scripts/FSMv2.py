@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-#!/usr/bin/env python3
 
 # FSM: Combination of supervisor and navigator functions
 # Including A* navigation and the ability to stop at stop signs, objects, ...
@@ -72,7 +71,7 @@ class FSM:
 
     def __init__(self):
 
-    	# Initializing modes to Idle, exploration mode
+        # Initializing modes to Idle, exploration mode
         rospy.init_node("fsm", anonymous=True)
         self.mode = Mode.IDLE
         self.switch_mode(Mode.IDLE)
@@ -145,6 +144,7 @@ class FSM:
         self.exploration_pub            = rospy.Publisher("/exploration_progress", String, queue_size=10)
         self.discovered_objects_pub     = rospy.Publisher("/discovered_objects", String, queue_size=10)
         self.marker_pub                 = rospy.Publisher('/marker_topic_array', MarkerArray, queue_size=10) # Jack's Marker Pub
+        self.rescue_pub                 = rospy.Publisher('/rescued_objects', String, queue_size=10)
         
         self.trans_listener = tf.TransformListener()
 
@@ -152,9 +152,9 @@ class FSM:
 
         # MY VARIABLES
         #need to update objects
-        self.found_objects_dict = {'house':False, 'tree':False, 'fire_hydrant':False, 'racket':False, 'boat':False} # initialize
+        self.found_objects_dict = {'potted_plant':False, 'fire_hydrant':False, 'tennis_racket':False, 'boat':False} # initialize
         self.found_objects_list = [] # objects are appended as they are discovered
-        self.object_locations = {'house':(None, None, None), 'tree':(None, None, None), 'fire_hydrant':(None, None, None), 'racket':(None, None, None), 'boat':(None, None, None)} # initialize
+        self.object_locations = {'potted_plant':(None, None, None), 'fire_hydrant':(None, None, None), 'tennis_racket':(None, None, None), 'boat':(None, None, None)} # initialize
         self.stored            = False # to check if we have stored the objects to rescue or not
         self.num_obj_to_rescue = None
         self.x_init            = None
@@ -173,10 +173,9 @@ class FSM:
             (2.469, 0.482, 0.5*np.pi),
             (2.572, 1.500, np.pi),
             (1.469, 0.470, np.pi),
-            (0.365, 1.349, 0),
             (0.287, 1.743, 0.5*np.pi) #last one is the initial starting point
         ]
-        # self.markerarray = MarkerArray()
+        #second to last waypoint - deleted temporarily -             (0.365, 1.349, 0),
         self.marker_array_msg   = MarkerArray()
         self.currentWPind       = 0
         self.currentRescueID    = -1
@@ -189,7 +188,7 @@ class FSM:
         self.save_time       = rospy.get_param("~save_time", 1.) # Pause duration when saving the location of an object
         self.rescue_time     = rospy.get_param("~rescue_time", 3.) # Pause duration when rescuing an object
         self.stop_min_dist   = rospy.get_param("~stop_min_dist", 0.7) # Minimum distance from a stop sign to obey it
-        self.object_min_dist = rospy.get_param("~object_min_dist", 1.0)
+        self.object_min_dist = rospy.get_param("~object_min_dist", 2.0)
         self.crossing_time   = rospy.get_param("~crossing_time", 3.) # Time taken to cross an intersection
 
         # SUBSCRIBERS
@@ -209,8 +208,9 @@ class FSM:
 
     # constructs an individual marker. called to marker waypoints as well as discovered objects
     def make_marker(self, point, color):
-    	x, y, th = point
-    	marker = Marker()
+        x, y, th = point
+        i = len(self.marker_array_msg.markers)
+        marker = Marker()
         marker.header.frame_id = "map"
         marker.header.stamp = rospy.Time()
         marker.id = i #0
@@ -228,12 +228,14 @@ class FSM:
         marker.scale.z = 0.1
         marker.color.a = 1.0 
         if color=='red':
-	        marker.color.r = 1.0
-	        marker.color.g = 0.0
+            marker.color.r = 1.0
+            marker.color.g = 0.0
         elif color=='green':
-        	marker.color.r = 0.0
-	        marker.color.g = 1.0
+            marker.color.r = 0.0
+            marker.color.g = 1.0
         marker.color.b = 0.0
+
+        return marker
 
     # CALLBACKS
     def dyn_cfg_callback(self, config, level):
@@ -274,7 +276,7 @@ class FSM:
                 self.switch_mode(Mode.ALIGN)
                 self.iterate_rescueTarget()
             else:
-            	rospy.loginfo('Input incorrect objects, please see /discovered_objects for valid objects to be input')
+                rospy.loginfo('Input incorrect objects, please see /discovered_objects for valid objects to be input')
         
         return config
 
@@ -285,6 +287,7 @@ class FSM:
             self.x_g = data.x
             self.y_g = data.y
             self.theta_g = data.theta
+            print("replanning for cmd nav callback")
             self.replan()
     def map_md_callback(self, msg): # Receives map metadata; stores it
         """ receives maps meta data and stores it """
@@ -306,7 +309,7 @@ class FSM:
                 self.window_size,
                 self.map_probs,
             )
-            if self.x_g is not None:
+            if self.x_g is not None and not self.mode==Mode.RESCUING:
                 # if we have a goal to plan to, replan
                 rospy.loginfo("replanning because of new map")
                 self.replan()  # new map, need to replan
@@ -474,6 +477,7 @@ class FSM:
     def mark_rescued(self, objectName):
         self.isRescued[objectName] = True
         self.num_obj_rescued = sum(self.isRescued.values()) # update: Count the number of True values in dict
+        self.rescue_pub.publish(objectName)
 
     def has_rescued(self):
         """ checks if rescuing maneuver is over """
@@ -495,11 +499,11 @@ class FSM:
             # corners = obj.corners
             if name in self.found_objects_dict.keys(): # If this is an object we are expecting to see
                 # If we are close enough to the previously-undiscovered object, save!!
-                if distance > 0 and distance < self.object_min_dist and self.found_objects_dict[name] == False and confidence >= 0.6:
+                if distance > 0 and distance < self.object_min_dist and self.found_objects_dict[name] == False:
                     self.switch_mode(Mode.SAVING)
                     # Get the world frame coordinates of the detected object
                     x  = self.x + 0.6*distance*np.cos(self.theta)
-                    y  = self.y + 0.6*distance*np.cos(self.theta)
+                    y  = self.y + 0.6*distance*np.sin(self.theta)
                     th = self.theta
                     # Assign the corresponding elements in the dictionaries if we haven't already done so
                     # Using if-else statement to account for inaccuracies in the CNN detector:
@@ -510,17 +514,17 @@ class FSM:
                     self.marker_pub.publish(self.marker_array_msg)
 
                     if name=='fire_hydrant' or name=='traffic_light':
-	                    self.found_objects_dict['fire_hydrant']    = True
-	                    self.found_objects_list.append('fire_hydrant')
-	                    self.object_locations['fire_hydrant'] = (x,y,th)
+                        self.found_objects_dict['fire_hydrant']    = True
+                        self.found_objects_list.append('fire_hydrant')
+                        self.object_locations['fire_hydrant'] = (x,y,th)
                     elif name=='potted_plant' or name=='tree' or name=='bird':
-                    	self.found_objects_dict['tree']    = True
-                    	self.found_objects_list.append('tree')
-	                    self.object_locations['tree'] = (x,y,th)
+                        self.found_objects_dict['potted_plant']    = True
+                        self.found_objects_list.append('potted_plant')
+                        self.object_locations['potted_plant'] = (x,y,th)
                     else:
-                    	self.found_objects_dict[name]    = True
-                    	self.found_objects_list.append(name)
-	                    self.object_locations[name] = (x,y,th)
+                        self.found_objects_dict[name]    = True
+                        self.found_objects_list.append(name)
+                        self.object_locations[name] = (x,y,th)
 
                     # Logging
                     rospy.loginfo('Added {} to found objects dict'.format(name))
@@ -548,19 +552,27 @@ class FSM:
         self.x_g = x
         self.y_g = y
         self.theta_g = th
+        print("replanning for next rescue object")
+        print(self.object_locations[self.objects_to_rescue[self.currentRescueID]])
+        print(self.object_locations)
         self.replan()
 
     def returnHome(self):
         # Sets the goal position to be the initial position
-        self.x_g = self.x_init
-        self.y_g = self.y_init
-        self.theta_g = self.theta_init
+        x, y, th = self.waypoints[0]
+        # self.x_g = self.x_init
+        # self.y_g = self.y_init
+        # self.theta_g = self.theta_init
+        self.x_g = x
+        self.y_g = y
+        self.theta_g = th
+        print("replanning for next rescue object")
         self.replan()
 
     def set_none_goal(self):
-    	self.x_g     = None
-    	self.y_g     = None
-    	self.theta_g = None
+        self.x_g     = None
+        self.y_g     = None
+        self.theta_g = None
 
 
     def replan(self):
@@ -727,9 +739,11 @@ class FSM:
                         else:
                             self.switch_mode(Mode.IDLE)
                     else: # in Stage 2
-                        if not self.num_obj_rescued == self.num_obj_to_rescue:# We are still trying to rescue objects (we have not rescued all objects) NOTE finish
+                        # if not self.num_obj_rescued == self.num_obj_to_rescue:# We are still trying to rescue objects (we have not rescued all objects) NOTE finish
+                        if not all(self.isRescued.values()):
                             self.init_rescuing()
                         elif not self.close_to(self.x_init, self.y_init, self.theta_init): # We have rescued all, but still need to return back to initial position
+                            print('HITTING RETURN HOME FUNCTION')
                             self.returnHome()
                         else: # We have returned to the initial position
                             self.switch_mode(Mode.IDLE)
@@ -758,7 +772,7 @@ class FSM:
                     self.stay_idle()
 
             elif self.mode == Mode.RESCUING:
-                if self.has_rescued():
+                if self.has_rescued(): # and include some check if we still have more to rescue?
                     self.mark_rescued(self.objectsToRescue[self.currentRescueID])
                     self.iterate_rescueTarget()
                     # self.init_crossing()
