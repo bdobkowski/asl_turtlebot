@@ -145,7 +145,7 @@ class FSM:
         self.discovered_objects_pub     = rospy.Publisher("/discovered_objects", String, queue_size=10)
         self.marker_pub                 = rospy.Publisher('/marker_topic_array', MarkerArray, queue_size=10) # Jack's Marker Pub
         self.rescue_pub                 = rospy.Publisher('/rescued_objects', String, queue_size=10)
-        
+        self.stopdata_pub               = rospy.Publisher('/stop_sign_info', String, queue_size=10)
         self.trans_listener = tf.TransformListener()
 
         self.cfg_srv = Server(NavigatorConfig, self.dyn_cfg_callback)        
@@ -161,6 +161,7 @@ class FSM:
         self.y_init            = None
         self.theta_init        = None
         self.window_size       = 8
+        self.crossing          = False
 
         # waypoints for exploration
         self.waypoints = [
@@ -184,12 +185,12 @@ class FSM:
 
         self.pos_eps         = rospy.get_param("~pos_eps", 0.1) # Threshold at which we consider the robot at a location
         self.theta_eps       = rospy.get_param("~theta_eps", 0.3) # Threshold at which we consider the robot at a location
-        self.stop_time       = rospy.get_param("~stop_time", 3.) # Pause duration when at a stop sign
+        self.stop_time       = rospy.get_param("~stop_time", 1.3) # Pause duration when at a stop sign
         self.save_time       = rospy.get_param("~save_time", 1.) # Pause duration when saving the location of an object
         self.rescue_time     = rospy.get_param("~rescue_time", 3.) # Pause duration when rescuing an object
-        self.stop_min_dist   = rospy.get_param("~stop_min_dist", 0.7) # Minimum distance from a stop sign to obey it
+        self.stop_min_dist   = rospy.get_param("~stop_min_dist", 0.55) # Minimum distance from a stop sign to obey it
         self.object_min_dist = rospy.get_param("~object_min_dist", 2.0)
-        self.crossing_time   = rospy.get_param("~crossing_time", 3.) # Time taken to cross an intersection
+        self.crossing_time   = rospy.get_param("~crossing_time", 3.0) # Time taken to cross an intersection
 
         # SUBSCRIBERS
         rospy.Subscriber("/map", OccupancyGrid, self.map_callback)
@@ -321,27 +322,40 @@ class FSM:
         self.nav_vel_pub.publish(cmd_vel)
 
     # MY CALLBACKS
-    def stop_sign_detected_callback(self, msg):
-        dist = msg.distance # distance of the stop sign
-        # if close enough and in a navigation mode (e.g. not CROSS), start the stop sign process
-        if dist > 0 and dist < self.stop_min_dist and (self.mode == Mode.ALIGN or self.mode == Mode.TRACK or self.mode == Mode.PARK):
-            self.init_stop_sign()
-    
     def object_detected_callback(self, msg):
-        # Only need to perform this callback if we are in stage 1 (recording locations)
-        # (Detector does not need to be run during Stage 2 (rescue) because we already know where these things are)
-        if self.projectMode == ProjectMode.STAGE1:
-            # Get info from message
-            objectsList = msg.objects # Object names, list of strings
-            objectMessages = msg.ob_msgs # Object messages list, of form DetectedObject, includes id, name, confidence, distance, thetaleft, thetaright, corners
+        # If we are in stage 1: We need to recognize objects AND respond to stop signs
+        # If we are in stage 2: We only need to respond to stop signs when we are navigating
+        # In all stages, we need to check for stop signs first!!
 
-            num_obj = len(objectsList)
+        # Get the info from the message structure
+        objectsList = msg.objects # Object names, list of strings
+        objectMessages = msg.ob_msgs
+        num_obj = len(objectsList)
 
-            # check if we have a non-empty message and that at least one object has not been found yet
+        if "stop_sign" in objectsList:
+            # Find the stop sign data in the message
+            stopsign_index = [i for i in range(len(objectsList)) if objectsList[i] == "stop_sign"][0]
+            stopsignInfo = objectMessages[stopsign_index]
+            # Extract the distance to the stop sign
+            dist = float(stopsignInfo.distance)
+            self.stopdata_pub.publish(str(self.mode))
+            self.stopdata_pub.publish(str(dist))
+            # If this distance satisfies our conditions, then perform our stop sign process
+            if dist > 0.0 and dist < self.stop_min_dist and (self.mode == Mode.TRACK or self.mode == Mode.PARK) and not self.crossing:
+                self.stopdata_pub.publish("***** We are stopping at a stop sign *****")
+                self.init_stop_sign()
+            else:
+                # Doesn't satisfy our conditions, let's remove the info on it and proceed to the next check
+                num_obj = num_obj - 1
+                objectsList.remove(objectsList[stopsign_index])
+                objectMessages.remove(objectMessages[stopsign_index])
+
+        elif self.projectMode == ProjectMode.STAGE1: # No stop signs seen and in stage 1
+            # Check to make sure we have a non-empty message and that at least one object hasn't been found yet
             if num_obj>0 and any(x==False for x in self.found_objects_dict.values()): 
-                # Begin the saving process if so
-                self.init_saving(objectsList, objectMessages)
-    
+                    # Begin the saving process if so
+                    self.init_saving(objectsList, objectMessages)
+
     # Booleans from original code - good to go
     def near_goal(self): # Returns T/F: Robot is close enough to goal to start using pose control? 
         """ returns whether the robot is close enough in position to the goal to
@@ -431,8 +445,11 @@ class FSM:
 
     # MY FUNCTIONS
     def stay_idle(self):
-        """ sends zero velocity to stay put """
+        """ sends zero velocity to stay put """ # NEW NEW NEW
         vel_g_msg = Twist()
+        # vel_g_msg.linear.x = 0.0
+        # vel_g_msg.angular.z = 0.0
+        self.nav_vel_pub.publish(vel_g_msg)
 
     def close_to(self, x, y, theta):
         """ checks if the robot is at a pose within some threshold """
@@ -443,12 +460,28 @@ class FSM:
     def init_stop_sign(self):
         """ initiates a stop sign maneuver """
         self.stop_sign_start = rospy.get_rostime()
+        self.stop_sign_start_sec = rospy.get_time() # NEW debugging
+        self.stopdata_pub.publish("self.stop_sign_start below:")
+        self.stopdata_pub.publish(str(self.stop_sign_start))
         self.switch_mode(Mode.STOP)
 
     def has_stopped(self):
         """ checks if stop sign maneuver is over """
-        return self.mode == Mode.STOP and \
-               rospy.get_rostime() - self.stop_sign_start > rospy.Duration.from_sec(self.stop_time)
+        stopModeCheck = (self.mode == Mode.STOP)
+        # stopTimeCheck = rospy.get_rostime() - self.stop_sign_start
+        # self.stopdata_pub.publish(str("stopTimeCheck:"))
+        # self.stopdata_pub.publish(str(stopTimeCheck))
+        # self.stopdata_pub.publish(str("duration from sec condition:"))
+        # self.stopdata_pub.publish(str(rospy.Duration.from_sec(self.stop_time)))
+        # # seconds = rospy.get_time()
+        diff_in_time = rospy.get_time() - self.stop_sign_start_sec
+        # self.stopdata_pub.publish(str("**** Time comparison ****"))
+        # self.stopdata_pub.publish(str(diff_in_time))
+        newStopTimeCheck = (rospy.get_time() - self.stop_sign_start_sec) > self.stop_time
+        self.stopdata_pub.publish("newStopTimeCheck: " + str(diff_in_time))
+        # return self.mode == Mode.STOP and \
+        #        (rospy.get_rostime() - self.stop_sign_start) > rospy.Duration.from_sec(self.stop_time)
+        return (stopModeCheck and newStopTimeCheck)
     
     def has_saved(self):
         """ checks if saving is over """
@@ -458,6 +491,9 @@ class FSM:
     def init_crossing(self):
         """ initiates an intersection crossing maneuver """
         self.cross_start = rospy.get_rostime()
+        self.stopdata_pub.publish("self.cross_start below:")
+        self.stopdata_pub.publish(str(self.cross_start))
+        self.crossing = True
         self.switch_mode(Mode.CROSS)
 
     def has_crossed(self):
@@ -494,17 +530,27 @@ class FSM:
             name = obj.name
             confidence = obj.confidence
             distance = obj.distance
-            # thetaleft = obj.thetaleft
-            # thetaright = obj.thetaright
+            thetaleft = obj.thetaleft
+            thetaright = obj.thetaright
+            theta_avg = (wrapToPi(thetaleft)+ wrapToPi(thetaright))/2 # assuming radians 0 to 2pi
             # corners = obj.corners
             if name in self.found_objects_dict.keys(): # If this is an object we are expecting to see
                 # If we are close enough to the previously-undiscovered object, save!!
                 if distance > 0 and distance < self.object_min_dist and self.found_objects_dict[name] == False:
                     self.switch_mode(Mode.SAVING)
                     # Get the world frame coordinates of the detected object
-                    x  = self.x + 0.6*distance*np.cos(self.theta)
-                    y  = self.y + 0.6*distance*np.sin(self.theta)
-                    th = self.theta
+
+                    #this param decides how far towards the object to place the marker once it is detected
+                    if name == 'potted_plant' or name == 'fire_hydrant':
+                        magnification_parameter = 0.6
+                    else:
+                        magnification_parameter = 0.4
+
+                    final_th = (self.theta + theta_avg) % (2*np.pi)
+
+                    x  = self.x + magnification_parameter*distance*np.cos(final_th)
+                    y  = self.y + magnification_parameter*distance*np.sin(final_th)
+                    th = final_th
                     # Assign the corresponding elements in the dictionaries if we haven't already done so
                     # Using if-else statement to account for inaccuracies in the CNN detector:
 
@@ -566,7 +612,7 @@ class FSM:
         self.x_g = x
         self.y_g = y
         self.theta_g = th
-        print("replanning for next rescue object")
+        print("replanning to return home")
         self.replan()
 
     def set_none_goal(self):
@@ -739,10 +785,12 @@ class FSM:
                         else:
                             self.switch_mode(Mode.IDLE)
                     else: # in Stage 2
+                        x_init, y_init, th_init = self.waypoints[0]
                         # if not self.num_obj_rescued == self.num_obj_to_rescue:# We are still trying to rescue objects (we have not rescued all objects) NOTE finish
                         if not all(self.isRescued.values()):
+                            print('HITTING NOT ALL RESCUED VALUES')
                             self.init_rescuing()
-                        elif not self.close_to(self.x_init, self.y_init, self.theta_init): # We have rescued all, but still need to return back to initial position
+                        elif not self.close_to(x_init, y_init, th_init): # We have rescued all, but still need to return back to initial position
                             print('HITTING RETURN HOME FUNCTION')
                             self.returnHome()
                         else: # We have returned to the initial position
@@ -752,29 +800,39 @@ class FSM:
             elif self.mode == Mode.STOP:
                 # At a stop sign
                 if self.has_stopped():
+                    self.stopdata_pub.publish("I HAVE STOPPED!!!!!!!")
                     self.init_crossing()
+                    self.stopdata_pub.publish("I HAVE INITIALIZED CROSSING!")
                     self.switch_mode(Mode.CROSS)
+                    self.stopdata_pub.publish("TIME TO CROSS")
                 else:
                     self.stay_idle()
 
             elif self.mode == Mode.CROSS:
+                self.stopdata_pub.publish("In crossing mode")
                 # Crossing an intersection
                 if self.has_crossed():
+                    self.stopdata_pub.publish("Has crossed")
+                    self.crossing = False
                     self.switch_mode(Mode.ALIGN)
                 # self.nav_to_pose() 
                 # self.publish_control()
             
             elif self.mode == Mode.SAVING:
                 if self.has_saved():
-                    self.init_crossing()
-                    self.switch_mode(Mode.CROSS)
+                    # self.init_crossing()
+                    # self.switch_mode(Mode.CROSS)
+                    self.switch_mode(Mode.ALIGN)
                 else:
                     self.stay_idle()
 
             elif self.mode == Mode.RESCUING:
                 if self.has_rescued(): # and include some check if we still have more to rescue?
-                    self.mark_rescued(self.objectsToRescue[self.currentRescueID])
-                    self.iterate_rescueTarget()
+                    self.mark_rescued(self.objects_to_rescue[self.currentRescueID])
+                    if self.num_obj_rescued == self.num_obj_to_rescue:
+                        self.returnHome()
+                    else:
+                        self.iterate_rescueTarget()
                     # self.init_crossing()
                     # self.switch_mode(Mode.CROSS)
                 else:

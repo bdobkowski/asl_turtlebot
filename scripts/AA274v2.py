@@ -44,7 +44,7 @@ def publisher():
         spacer = w/2
         
         # Defining origin to be the bottom left most point in a rectangular bounding box of the letter/number
-        originA = np.array([0,0,0]) # Starting point for the bottom left most point of the first A
+        originA = np.array([0,4.5,0]) # Starting point for the bottom left most point of the first A
         originAA =    originA + np.array([   w + spacer , 0, 0])
         originTwo =   originA + np.array([2*(w + spacer), 0, 0])
         originSeven = originA + np.array([3*(w + spacer), 0, 0])
