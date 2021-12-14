@@ -1,0 +1,18 @@
+<launch>
+  <arg name="sim" default="true"/>
+
+  <include file="$(find asl_turtlebot)/launch/root.launch">
+    <arg name="world" value="finalproj_world_120721" /> <!-- previously 120221 and 120421-->
+    <arg name="x_pos" default="4.25"/>
+    <arg name="y_pos" default="0.9"/>
+    <arg name="z_pos" default="0.0"/>
+    <arg name="rviz" default="project"/>
+    <arg name="model" default="asl_turtlebot"/>
+    <arg name="sim" default="$(arg sim)"/>
+  </include>
+  <!--node pkg="section5" type="marker_node.py" name="marker_node" /-->
+  <node pkg="asl_turtlebot" type="FSMv3.py" name="fsm" output="screen" launch-prefix="bash -c 'sleep 5.0; $0 $@' " />
+  <node pkg="asl_turtlebot" type="myDetectorv2.py" name="detector" output="screen" launch-prefix="bash -c 'sleep 5.0; $0 $@' " />
+  <node pkg="asl_turtlebot" type="FOVv2.py" name="FOV" output="screen" launch-prefix="bash -c 'sleep 5.0; $0 $@' "/>
+  <node pkg="asl_turtlebot" type="AA274v2.py" name="aa274" output="screen" launch-prefix="bash -c 'sleep 5.0; $0 $@' "/>
+</launch>
